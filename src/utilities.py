@@ -88,18 +88,25 @@ def get_loss_and_acc(loss: str):
 
 
 def compute_hvp(network: nn.Module, loss_fn: nn.Module,
-                dataset: Dataset, vector: Tensor, physical_batch_size: int = DEFAULT_PHYS_BS):
-    """Compute a Hessian-vector product."""
+                dataset: Dataset, vector: Tensor, physical_batch_size: int = DEFAULT_PHYS_BS, P: Tensor = None):
+    """Compute a Hessian-vector product.
+    
+    If the optional preconditioner P is not set to None, return P^{-1/2} H P^{-1/2} v rather than H v.
+    """
     p = len(parameters_to_vector(network.parameters()))
     n = len(dataset)
     hvp = torch.zeros(p, dtype=torch.float, device='cuda')
     vector = vector.cuda()
+    if P is not None:
+        vector = vector / P.cuda().sqrt()
     for (X, y) in iterate_dataset(dataset, physical_batch_size):
         loss = loss_fn(network(X), y) / n
         grads = torch.autograd.grad(loss, inputs=network.parameters(), create_graph=True)
         dot = parameters_to_vector(grads).mul(vector).sum()
         grads = [g.contiguous() for g in torch.autograd.grad(dot, network.parameters(), retain_graph=True)]
         hvp += parameters_to_vector(grads)
+    if P is not None:
+        hvp = hvp / P.cuda().sqrt()
     return hvp
 
 
@@ -118,10 +125,13 @@ def lanczos(matrix_vector, dim: int, neigs: int):
 
 
 def get_hessian_eigenvalues(network: nn.Module, loss_fn: nn.Module, dataset: Dataset,
-                            neigs=6, physical_batch_size=1000):
-    """ Compute the leading Hessian eigenvalues. """
+                            neigs=6, physical_batch_size=1000, P=None):
+    """ Compute the leading Hessian eigenvalues.
+    
+    If preconditioner P is not set to None, return top eigenvalue of P^{-1/2} H P^{-1/2} rather than H.
+    """
     hvp_delta = lambda delta: compute_hvp(network, loss_fn, dataset,
-                                          delta, physical_batch_size=physical_batch_size).detach().cpu()
+                                          delta, physical_batch_size=physical_batch_size, P=P).detach().cpu()
     nparams = len(parameters_to_vector((network.parameters())))
     evals, evecs = lanczos(hvp_delta, nparams, neigs=neigs)
     return evals

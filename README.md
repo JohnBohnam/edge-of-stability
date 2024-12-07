@@ -300,3 +300,23 @@ The optional parameters of `src/flow.py` are:
 - `abridged_size` [int, defaults to 5000]: see above
 - `save_model` [bool, defaults to False]: see above
 
+## Update (December 2024) - Adam
+
+I'm adding code for running "adaptive edge of stability" (https://arxiv.org/abs/2207.14484) experiments with Adam.  The code is in the new file `src/adam.py`.
+
+To train the fully-connected tanh network using Adam with $\eta$ = 5e-5, $\beta_1$ = 0.9, $\beta_2$ = 0.99, $\epsilon$ = 1e-7 (default), while recording the preconditioned sharpness every five iterations, run the command:
+```
+python src/adam.py cifar10-5k fc-tanh mse 5e-5 20000 --loss_goal 0.05 --neigs 4  --eig_freq 5 --beta1 0.9 --beta2 0.99
+```
+I ran this code for step sizes 5e-5, 1e-4, 2e-4, 4e-4, and then generated the following plot of train loss and preconditioned sharpness:
+![demo](figures/adam.png)
+The dashed line is the prediction of $(2 + 2 \beta_1)/((1 - \beta_1)\eta )$
+
+To train the same network using RMSProp, run the above line but pass `--beta1 0.0`, i.e.
+```
+python src/adam.py cifar10-5k fc-tanh mse 5e-5 20000 --loss_goal 0.05 --neigs 4  --eig_freq 5 --beta1 0.0 --beta2 0.99
+```
+
+I ran this code for step sizes 5e-6, 1e-5, 2e-5, 5e-5 and then generated the following plot of train loss and preconditioned sharpness:
+![demo](figures/rmsprop.png)
+The dashed line is the prediction of $2 / \eta$.
