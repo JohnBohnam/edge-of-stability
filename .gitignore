@@ -5,5 +5,8 @@ demo.py
 .DS_Store
 .idea
 data
-results
+results/*
+datasets/*
+output/*
+scripts/nohup.out
 src/__pycache__
