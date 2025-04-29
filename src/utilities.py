@@ -14,6 +14,8 @@ import os
 # the default value for "physical batch size", which is the largest batch size that we try to put on the GPU
 DEFAULT_PHYS_BS = 1000
 
+def make_base_directory(dataset: str, arch_id: str, loss: str):
+    return f"{os.environ['RESULTS']}/{dataset}/{arch_id}/{loss}"
 
 def get_gd_directory(dataset: str, lr: float, arch_id: str, seed: int, opt: str, loss: str, beta: float = None):
     """Return the directory in which the results should be saved."""

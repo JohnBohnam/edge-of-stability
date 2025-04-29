@@ -6,11 +6,12 @@ time $PYTHON "$SCRIPT_DIR"/../src/run_ngd.py \
 	cnn-relu \
 	mse \
 	0.05 \
-	100 \
+	10000 \
 	--acc_goal 0.99 \
 	--neigs 2 \
-	--eig_freq 20 \
+	--eig_freq 10 \
 	--iterate_freq 50 \
 	--save_model true \
-	--physical_batch_size 1000 \
-	--save_freq 50
+	--physical_batch_size 3000 \
+	--save_freq 50 \
+	--epsilon 1e-5
