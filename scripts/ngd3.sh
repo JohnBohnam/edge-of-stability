@@ -4,8 +4,8 @@ source "$SCRIPT_DIR"/environ.sh
 time $PYTHON "$SCRIPT_DIR"/../src/run_ngd.py \
 	cifar10 \
 	cnn-relu \
-	mse \
-	0.05 \
+	ce \
+	0.01 \
 	10000 \
 	--acc_goal 0.99 \
 	--neigs 2 \

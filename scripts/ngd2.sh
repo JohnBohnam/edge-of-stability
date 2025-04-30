@@ -5,7 +5,7 @@ time $PYTHON "$SCRIPT_DIR"/../src/run_ngd.py \
 	cifar10 \
 	cnn-relu \
 	mse \
-	0.05 \
+	0.001 \
 	10000 \
 	--acc_goal 0.99 \
 	--neigs 2 \
