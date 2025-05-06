@@ -68,13 +68,15 @@ def iterate_dataset(dataset: Dataset, batch_size: int):
 
 
 def compute_losses(network: nn.Module, loss_functions: List[nn.Module], dataset: Dataset,
-                   batch_size: int = DEFAULT_PHYS_BS):
+                   batch_size: int = DEFAULT_PHYS_BS, activation_fn = None):
     """Compute loss over a dataset."""
     L = len(loss_functions)
     losses = [0. for l in range(L)]
     with torch.no_grad():
         for (X, y) in iterate_dataset(dataset, batch_size):
             preds = network(X)
+            if activation_fn is not None:
+                preds = activation_fn(preds)
             for l, loss_fn in enumerate(loss_functions):
                 losses[l] += loss_fn(preds, y) / len(dataset)
     return losses

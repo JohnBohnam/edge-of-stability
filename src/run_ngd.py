@@ -30,11 +30,8 @@ def main(dataset: str,
          acc_goal: float = None, 
          seed: int = 0,
          abridged_size: int = 5000,
-        ):
-    
-    torch.autograd.set_detect_anomaly(True)
-    
-    directory = f"{make_base_directory(dataset, arch_id, loss)}/seed_{seed}/ngd/{model_params.get_filename()}"
+        ):    
+    directory = f"{make_base_directory(dataset, arch_id, loss)}/seed_{seed}/ngd/{model_params.get_dirname()}"
     print(f"output directory: {directory}")
     makedirs(directory, exist_ok=True)
 
@@ -55,22 +52,38 @@ def main(dataset: str,
     iterates = torch.zeros(max_steps // iterate_freq if iterate_freq > 0 else 0, len(projectors))
     eigs = torch.zeros(max_steps // eig_freq if eig_freq >= 0 else 0, neigs)
     
-    loader = DataLoader(train_dataset, batch_size=model_params.physical_batch_size, shuffle=False)
-    optimizer = NGD.EmpiricalNGD(model_params)
-
+    cos_similarity = torch.zeros(max_steps)
+    grad_norm = torch.zeros(max_steps)
+    ng_norm = torch.zeros(max_steps)
+    
+    loader = DataLoader(train_dataset, batch_size=model_params.physical_batch_size, shuffle=True)
+    optimizer = NGD.EmpiricalNGD(network, model_params)
+    activation_fn = torch.nn.Softmax(dim=1)
 
     for step in range(max_steps):
         for X, y in loader:
-            train_loss[step], train_acc[step] = compute_losses(network, [loss_fn, acc_fn], train_dataset, model_params.physical_batch_size)
-            test_loss[step], test_acc[step] = compute_losses(network, [loss_fn, acc_fn], test_dataset, model_params.physical_batch_size)
+            metrics = optimizer.step(loss_fn, X, y, train_dataset)
+            
+            cos_similarity[step] = metrics["cosine_similarity"]
+            grad_norm[step] = metrics["grad_norm"]
+            ng_norm[step] = metrics["ng_norm"]
+            
+            train_loss[step], train_acc[step] = compute_losses(network, [loss_fn, acc_fn], train_dataset, model_params.physical_batch_size, activation_fn)
+            test_loss[step], test_acc[step] = compute_losses(network, [loss_fn, acc_fn], test_dataset, model_params.physical_batch_size, activation_fn)
 
             if iterate_freq != -1 and step % iterate_freq == 0:
                 iterates[step // iterate_freq, :] = projectors.mv(parameters_to_vector(network.parameters()).cpu().detach())
 
             if save_freq != -1 and step % save_freq == 0:
-                save_files(directory, [("eigs", eigs[:step // eig_freq]), ("iterates", iterates[:step // iterate_freq]),
-                                       ("train_loss", train_loss[:step]), ("test_loss", test_loss[:step]),
-                                       ("train_acc", train_acc[:step]), ("test_acc", test_acc[:step])])
+                save_files(directory, [("eigs", eigs[:step // eig_freq]), 
+                                       ("iterates", iterates[:step // iterate_freq]),
+                                       ("train_loss", train_loss[:step]), 
+                                       ("test_loss", test_loss[:step]),
+                                       ("train_acc", train_acc[:step]), 
+                                       ("test_acc", test_acc[:step]),
+                                       ("cos_similarity", cos_similarity[:step]),
+                                       ("grad_norm", grad_norm[:step]),
+                                       ("ng_norm", ng_norm[:step])])
 
             if eig_freq != -1 and step % eig_freq == 0:
                 eigs[step // eig_freq, :] = get_hessian_eigenvalues(network, loss_fn, abridged_train, neigs=neigs,
@@ -82,7 +95,6 @@ def main(dataset: str,
             if (loss_goal != None and train_loss[step] < loss_goal) or (acc_goal != None and train_acc[step] > acc_goal):
                 break
 
-            optimizer.step(network, loss_fn, X, y, train_dataset)
 
             # just use one batch per step lol
             break
@@ -126,7 +138,11 @@ if __name__ == "__main__":
                         help="if 'true', save model weights at end of training")
     parser.add_argument("--abridged_size", type=int, default=5000,
                         help="when computing top Hessian eigenvalues, use an abridged dataset of this size")
+    parser.add_argument("--momentum", type=float, default=0.9,
+                        help="the momentum parameter for the natural gradient descent optimizer")
     args = parser.parse_args()
+    parser.add_argument("--clip", type=float, default=None,
+                        help="the maximum norm for the gradient clipping")
     
     model_fields = {f.name for f in dataclasses.fields(NGD.EmpiricalNGD.Params)}
     model_args = {k: v for k, v in vars(args).items() if k in model_fields}
