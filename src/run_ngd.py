@@ -138,7 +138,7 @@ if __name__ == "__main__":
                         help="if 'true', save model weights at end of training")
     parser.add_argument("--abridged_size", type=int, default=5000,
                         help="when computing top Hessian eigenvalues, use an abridged dataset of this size")
-    parser.add_argument("--momentum", type=float, default=0.9,
+    parser.add_argument("--momentum", type=float, default=None,
                         help="the momentum parameter for the natural gradient descent optimizer")
     args = parser.parse_args()
     parser.add_argument("--clip", type=float, default=None,
