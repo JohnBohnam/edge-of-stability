@@ -4,7 +4,7 @@ source "$SCRIPT_DIR"/environ.sh
 time $PYTHON "$SCRIPT_DIR"/../src/run_ngd.py \
 	cifar10 \
 	cnn-relu \
-	ce \
+	mse \
 	0.01 \
 	10000 \
 	--acc_goal 0.99 \
@@ -14,4 +14,5 @@ time $PYTHON "$SCRIPT_DIR"/../src/run_ngd.py \
 	--save_model true \
 	--physical_batch_size 1000 \
 	--save_freq 50 \
-	--epsilon 1e-5
+	--epsilon 1e-6 \
+	--momentum 0.5 \
