@@ -10,8 +10,10 @@ class EmpiricalNGD():
         lr: float = 0.01
         fisher_batch_size: int = 1000
         physical_batch_size: int = 1000
+        gradient_batch_size: int = None
         epsilon: float = 1e-8
         device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        gd_only: bool = False
         momentum: float = None
         clip: float = None
         
@@ -21,48 +23,68 @@ class EmpiricalNGD():
                 directory += f"__momentum_{self.momentum}"
             if self.clip is not None:
                 directory += f"__clip_{self.clip}"
+            if self.gd_only:
+                directory += f"__gd_only_{self.gd_only}"
+            if self.gradient_batch_size is not None:
+                directory += f"__gradient_bs_{self.gradient_batch_size}"
             return directory
         
         
-    def __init__(self, model: torch.nn.Module, params: Params = Params()):
+    def __init__(self, 
+                 model: torch.nn.Module, 
+                 loss_fn: torch.nn.Module,
+                 dataset: torch.utils.data.Dataset,
+                 activation_fn: torch.nn.Module = None,
+                 params: Params = Params()):
+        """
+            params.fisher_batch_size and param.gradient_batch_size have to be divisible by params.physical_batch_size
+        """
         self.__dict__.update(dataclasses.asdict(params))
         self.model = model
         self.FIM_momentum = [torch.zeros_like(param) for param in self.model.parameters()]
+        self.loader_train = DataLoader(dataset, batch_size=self.physical_batch_size, shuffle=True)
+        self.loss_fn = loss_fn
+        self.activation_fn = activation_fn if activation_fn is not None else torch.nn.Softmax(dim=1)
         
-        
-    def step(self, 
-             loss_fn: torch.nn.Module, 
-             X, 
-             y, 
-             dataset: torch.utils.data.Dataset,
-             ):
-        loader_fim = DataLoader(dataset, batch_size=1, shuffle=True)
-
-        X = X.to(self.device)
-        y = y.to(self.device)
-
-        
-        model_probs = torch.nn.Softmax(dim=1)(self.model(X))
-        loss = loss_fn(model_probs, y)
-        self.model.zero_grad()
-        l_grad = torch.autograd.grad(loss, self.model.parameters())
-        # print(f"loss: {loss.item()}")
-
-        # calculate diagonal fisher:
+    def step(self):
+        # self.model.zero_grad()
+        l_grad = [torch.zeros_like(param) for param in self.model.parameters()]
         FIM_diag = [torch.zeros_like(param) for param in self.model.parameters()]
-    
-        for i, (X_f, y_f) in enumerate(loader_fim):
-            if i >= self.fisher_batch_size:
+
+        for i, (X, y) in enumerate(self.loader_train):
+            
+            compute_grad = self.gradient_batch_size is None or i * self.physical_batch_size < self.gradient_batch_size
+            compute_fim = self.fisher_batch_size is None or i * self.physical_batch_size < self.fisher_batch_size
+            if not compute_grad and not compute_fim:
                 break
-            X_f = X_f.to(self.device)
-            y_f = y_f.to(self.device)
             
-            llh = torch.sum(torch.nn.Softmax(dim=1)(self.model(X_f)) * y_f, dim=1)            
-            true_label_llh = torch.log(llh + self.epsilon)
             
-            llh_grad = torch.autograd.grad(true_label_llh, self.model.parameters())
-            for j, param in enumerate(self.model.parameters()):
-                FIM_diag[j] += llh_grad[j]**2
+            X = X.to(self.device)
+            y = torch.nn.functional.one_hot(y, num_classes=10).float().to(self.device)
+            model_logits = self.model(X)
+                
+            if compute_grad:
+                loss = self.loss_fn(model_logits, y)
+                l_grad_batch = torch.autograd.grad(loss, self.model.parameters(), retain_graph=True)
+                for j, param in enumerate(self.model.parameters()):
+                    l_grad[j] += l_grad_batch[j] / self.gradient_batch_size
+                
+            if compute_fim:
+                if self.activation_fn is not None:
+                    model_probs = self.activation_fn(model_logits)
+                else:
+                    model_probs = model_logits
+                    
+                llh = torch.sum(model_probs * y, dim=1)
+                true_label_llh = torch.log(llh + self.epsilon)
+                grads = torch.autograd.grad(true_label_llh.sum(), self.model.parameters(), retain_graph=False)
+                
+                for j, param in enumerate(self.model.parameters()):
+                    FIM_diag[j] += (grads[j]**2) / self.fisher_batch_size
+                    
+        
+                    
+        
                 
         # update the FIM momentum:
         for j, param in enumerate(self.model.parameters()):
@@ -71,28 +93,44 @@ class EmpiricalNGD():
             else:
                 self.FIM_momentum[j] = FIM_diag[j]
                 
-
         # calculate the natural gradient:
         ng = [l_grad[j] / (self.FIM_momentum[j] + self.epsilon) for j in range(len(l_grad))]
         ng_cat = torch.cat([ng[j].flatten() for j in range(len(ng))])   
         ng_norm = torch.norm(ng_cat)
         
-        for j, param in enumerate(self.model.parameters()):
-            if self.clip is not None:
-                ng[j] = ng[j] / max(self.clip, ng_norm.item())
-            param.data -= self.lr * ng[j]
+        step_taken = [torch.zeros_like(param) for param in self.model.parameters()]
+        
+        
+        if self.gd_only:    
+            for j, param in enumerate(self.model.parameters()):
+                step_taken[j] = self.lr * l_grad[j]
+                param.data -= step_taken[j]
+        else:
+            for j, param in enumerate(self.model.parameters()):
+                if self.clip is not None:
+                    ng[j] = ng[j] / max(1, ng_norm.item()) * self.clip
+                step_taken[j] = ng[j] * self.lr
+                param.data -= step_taken[j]
+            
         
         cos_similarity = torch.nn.functional.cosine_similarity(
             torch.cat([l_grad_el.flatten() for l_grad_el in l_grad]),
             torch.cat([ng_el.flatten() for ng_el in ng]),
             dim=0,
         )
+        
+        print("cos_similarity: ", cos_similarity.item())
+        print("ng_norm: ", ng_norm.item())
+        print("grad_norm: ", torch.norm(torch.cat([l_grad[j].flatten() for j in range(len(l_grad))])).item())
+        print("FIM_diag: ", torch.norm(torch.cat([FIM_diag_el.flatten() for FIM_diag_el in FIM_diag])).item())
+        print("FIM_momentum: ", torch.norm(torch.cat([FIM_momentum_el.flatten() for FIM_momentum_el in self.FIM_momentum])).item())
+        print("step taken: ", torch.norm(torch.cat([step_taken[j].flatten() for j in range(len(step_taken))])).item())
             
         return {
             "loss": loss.item(),
             "cosine_similarity": cos_similarity.item(),
             "ng_norm": ng_norm.item(),
             "grad_norm": torch.norm(torch.cat([l_grad[j].flatten() for j in range(len(l_grad))])).item(),
-            # "FIM_diag": torch.norm(torch.cat([FIM_diag_el.flatten() for FIM_diag_el in FIM_diag])).item(),
-            # "FIM_momentum": torch.norm(torch.cat([FIM_momentum_el.flatten() for FIM_momentum_el in self.FIM_momentum])).item()
+            "FIM_diag": torch.norm(torch.cat([FIM_diag_el.flatten() for FIM_diag_el in FIM_diag])).item(),
+            "FIM_momentum": torch.norm(torch.cat([FIM_momentum_el.flatten() for FIM_momentum_el in self.FIM_momentum])).item()
         }

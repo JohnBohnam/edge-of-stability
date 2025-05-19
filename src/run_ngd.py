@@ -55,48 +55,56 @@ def main(dataset: str,
     cos_similarity = torch.zeros(max_steps)
     grad_norm = torch.zeros(max_steps)
     ng_norm = torch.zeros(max_steps)
+    FIM_diag_norm = torch.zeros(max_steps)
+    FIM_momentum_norm = torch.zeros(max_steps)
     
-    loader = DataLoader(train_dataset, batch_size=model_params.physical_batch_size, shuffle=True)
-    optimizer = NGD.EmpiricalNGD(network, model_params)
+    
+    # if model_params.gd_only:
+    #     activation_fn = None
+    # else:
     activation_fn = torch.nn.Softmax(dim=1)
+        
+    print("Using activation function: ", activation_fn)
+    optimizer = NGD.EmpiricalNGD(network, loss_fn, train_dataset, params=model_params, activation_fn=activation_fn)
+
 
     for step in range(max_steps):
-        for X, y in loader:
-            metrics = optimizer.step(loss_fn, X, y, train_dataset)
-            
-            cos_similarity[step] = metrics["cosine_similarity"]
-            grad_norm[step] = metrics["grad_norm"]
-            ng_norm[step] = metrics["ng_norm"]
-            
-            train_loss[step], train_acc[step] = compute_losses(network, [loss_fn, acc_fn], train_dataset, model_params.physical_batch_size, activation_fn)
-            test_loss[step], test_acc[step] = compute_losses(network, [loss_fn, acc_fn], test_dataset, model_params.physical_batch_size, activation_fn)
+        metrics = optimizer.step()
+        
+        cos_similarity[step] = metrics["cosine_similarity"]
+        grad_norm[step] = metrics["grad_norm"]
+        ng_norm[step] = metrics["ng_norm"]
+        FIM_diag_norm[step] = metrics["FIM_diag"]
+        FIM_momentum_norm[step] = metrics["FIM_momentum"]
+        
+        train_loss[step], train_acc[step] = compute_losses(network, [loss_fn, acc_fn], train_dataset, model_params.physical_batch_size, activation_fn)
+        test_loss[step], test_acc[step] = compute_losses(network, [loss_fn, acc_fn], test_dataset, model_params.physical_batch_size, activation_fn)
 
-            if iterate_freq != -1 and step % iterate_freq == 0:
-                iterates[step // iterate_freq, :] = projectors.mv(parameters_to_vector(network.parameters()).cpu().detach())
+        if iterate_freq != -1 and step % iterate_freq == 0:
+            iterates[step // iterate_freq, :] = projectors.mv(parameters_to_vector(network.parameters()).cpu().detach())
 
-            if save_freq != -1 and step % save_freq == 0:
-                save_files(directory, [("eigs", eigs[:step // eig_freq]), 
-                                       ("iterates", iterates[:step // iterate_freq]),
-                                       ("train_loss", train_loss[:step]), 
-                                       ("test_loss", test_loss[:step]),
-                                       ("train_acc", train_acc[:step]), 
-                                       ("test_acc", test_acc[:step]),
-                                       ("cos_similarity", cos_similarity[:step]),
-                                       ("grad_norm", grad_norm[:step]),
-                                       ("ng_norm", ng_norm[:step])])
+        if save_freq != -1 and step % save_freq == 0:
+            save_files(directory, [("eigs", eigs[:step // eig_freq]), 
+                                    ("iterates", iterates[:step // iterate_freq]),
+                                    ("train_loss", train_loss[:step]), 
+                                    ("test_loss", test_loss[:step]),
+                                    ("train_acc", train_acc[:step]), 
+                                    ("test_acc", test_acc[:step]),
+                                    ("cos_similarity", cos_similarity[:step]),
+                                    ("grad_norm", grad_norm[:step]),
+                                    ("ng_norm", ng_norm[:step]),
+                                    ("FIM_diag_norm", FIM_diag_norm[:step]),
+                                    ("FIM_momentum_norm", FIM_momentum_norm[:step]),
+                                    ])
 
-            if eig_freq != -1 and step % eig_freq == 0:
-                eigs[step // eig_freq, :] = get_hessian_eigenvalues(network, loss_fn, abridged_train, neigs=neigs,
-                                                                    physical_batch_size=model_params.physical_batch_size)
-                print("eigenvalues: ", eigs[step//eig_freq, :])
+        if eig_freq != -1 and step % eig_freq == 0:
+            eigs[step // eig_freq, :] = get_hessian_eigenvalues(network, loss_fn, abridged_train, neigs=neigs,
+                                                                physical_batch_size=model_params.physical_batch_size)
+            print("eigenvalues: ", eigs[step//eig_freq, :])
 
-            print(f"{step}\t{train_loss[step]:.3f}\t{train_acc[step]:.3f}\t{test_loss[step]:.3f}\t{test_acc[step]:.3f}")
+        print(f"{step}\t{train_loss[step]:.3f}\t{train_acc[step]:.3f}\t{test_loss[step]:.3f}\t{test_acc[step]:.3f}")
 
-            if (loss_goal != None and train_loss[step] < loss_goal) or (acc_goal != None and train_acc[step] > acc_goal):
-                break
-
-
-            # just use one batch per step lol
+        if (loss_goal != None and train_loss[step] < loss_goal) or (acc_goal != None and train_acc[step] > acc_goal):
             break
 
         
@@ -140,9 +148,14 @@ if __name__ == "__main__":
                         help="when computing top Hessian eigenvalues, use an abridged dataset of this size")
     parser.add_argument("--momentum", type=float, default=None,
                         help="the momentum parameter for the natural gradient descent optimizer")
-    args = parser.parse_args()
+    parser.add_argument("--gd_only", action="store_true",
+                        help="if true, only use the gradient descent part of the optimizer")
     parser.add_argument("--clip", type=float, default=None,
                         help="the maximum norm for the gradient clipping")
+    parser.add_argument("--gradient_batch_size", type=int, default=None,
+                        help="the number of examples used to compute the gradient")
+    
+    args = parser.parse_args()
     
     model_fields = {f.name for f in dataclasses.fields(NGD.EmpiricalNGD.Params)}
     model_args = {k: v for k, v in vars(args).items() if k in model_fields}
