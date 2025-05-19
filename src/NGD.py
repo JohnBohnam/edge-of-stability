@@ -43,6 +43,7 @@ class EmpiricalNGD():
         self.model = model
         self.FIM_momentum = [torch.zeros_like(param) for param in self.model.parameters()]
         self.loader_train = DataLoader(dataset, batch_size=self.physical_batch_size, shuffle=True)
+        self.loader_FIM = DataLoader(dataset, batch_size=1, shuffle=True)
         self.loss_fn = loss_fn
         self.activation_fn = activation_fn if activation_fn is not None else torch.nn.Softmax(dim=1)
         
@@ -54,37 +55,39 @@ class EmpiricalNGD():
         for i, (X, y) in enumerate(self.loader_train):
             
             compute_grad = self.gradient_batch_size is None or i * self.physical_batch_size < self.gradient_batch_size
-            compute_fim = self.fisher_batch_size is None or i * self.physical_batch_size < self.fisher_batch_size
-            if not compute_grad and not compute_fim:
+            if not compute_grad:
                 break
-            
             
             X = X.to(self.device)
             y = torch.nn.functional.one_hot(y, num_classes=10).float().to(self.device)
             model_logits = self.model(X)
                 
-            if compute_grad:
-                loss = self.loss_fn(model_logits, y)
-                l_grad_batch = torch.autograd.grad(loss, self.model.parameters(), retain_graph=True)
-                for j, param in enumerate(self.model.parameters()):
-                    l_grad[j] += l_grad_batch[j] / self.gradient_batch_size
+            loss = self.loss_fn(model_logits, y)
+            l_grad_batch = torch.autograd.grad(loss, self.model.parameters(), retain_graph=True)
+            for j, param in enumerate(self.model.parameters()):
+                l_grad[j] += l_grad_batch[j] / self.gradient_batch_size
                 
-            if compute_fim:
-                if self.activation_fn is not None:
-                    model_probs = self.activation_fn(model_logits)
-                else:
-                    model_probs = model_logits
-                    
-                llh = torch.sum(model_probs * y, dim=1)
-                true_label_llh = torch.log(llh + self.epsilon)
-                grads = torch.autograd.grad(true_label_llh.sum(), self.model.parameters(), retain_graph=False)
+    
+        for i, (X, y) in enumerate(self.loader_FIM):
+            compute_fim = self.fisher_batch_size is None or i < self.fisher_batch_size
+            if not compute_fim:
+                break
+            X = X.to(self.device)
+            y = torch.nn.functional.one_hot(y, num_classes=10).float().to(self.device)
+            model_logits = self.model(X)
+            
+            if self.activation_fn is not None:
+                model_probs = self.activation_fn(model_logits)
+            else:
+                model_probs = model_logits
                 
-                for j, param in enumerate(self.model.parameters()):
-                    FIM_diag[j] += (grads[j]**2) / self.fisher_batch_size
-                    
-        
-                    
-        
+            llh = torch.sum(model_probs * y, dim=1)
+            true_label_llh = torch.log(llh + self.epsilon)
+            grads = torch.autograd.grad(true_label_llh, self.model.parameters(), retain_graph=False)
+            
+            for j, param in enumerate(self.model.parameters()):
+                FIM_diag[j] += (grads[j]**2) / self.fisher_batch_size
+                
                 
         # update the FIM momentum:
         for j, param in enumerate(self.model.parameters()):
