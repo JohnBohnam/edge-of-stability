@@ -49,6 +49,7 @@ def main(dataset: str, arch_id: str, loss: str, max_time: float, tick: float, ne
     directory = get_flow_directory(dataset, arch_id, seed, loss, tick)
     print(f"output directory: {directory}")
     makedirs(directory, exist_ok=True)
+    makedirs(f"{directory}/snapshots", exist_ok=True)
 
     train_dataset, test_dataset = load_dataset(dataset, loss)
     abridged_train = take_first(train_dataset, abridged_size)
@@ -91,6 +92,7 @@ def main(dataset: str, arch_id: str, loss: str, max_time: float, tick: float, ne
                                    ("train_loss", train_loss[:step]), ("test_loss", test_loss[:step]),
                                    ("train_acc", train_acc[:step]), ("test_acc", test_acc[:step]),
                                    ("times", times[:step])])
+            torch.save(network.state_dict(), f"{directory}/snapshots/{step}")
 
         if (loss_goal is not None and train_loss[step] < loss_goal) or \
                 (acc_goal is not None and train_acc[step] > acc_goal):

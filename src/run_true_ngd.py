@@ -31,10 +31,9 @@ def main(dataset: str,
          seed: int = 0,
          abridged_size: int = 5000,
         ):    
-    directory = f"{make_base_directory(dataset, arch_id, loss)}/seed_{seed}/ngd/{model_params.get_dirname()}"
+    directory = f"{make_base_directory(dataset, arch_id, loss)}/seed_{seed}/true_ngd/{model_params.get_dirname()}"
     print(f"output directory: {directory}")
     makedirs(directory, exist_ok=True)
-    makedirs(f"{directory}/snapshots", exist_ok=True)
 
     train_dataset, test_dataset = load_dataset(dataset, loss)
     abridged_train = take_first(train_dataset, abridged_size)
@@ -66,7 +65,7 @@ def main(dataset: str,
     activation_fn = torch.nn.Softmax(dim=1)
         
     print("Using activation function: ", activation_fn)
-    optimizer = NGD.EmpiricalNGD(network, loss_fn, train_dataset, params=model_params, activation_fn=activation_fn)
+    optimizer = NGD.TrueNGD(network, loss_fn, train_dataset, params=model_params, activation_fn=activation_fn)
 
 
     for step in range(max_steps):
@@ -97,7 +96,6 @@ def main(dataset: str,
                                     ("FIM_diag_norm", FIM_diag_norm[:step]),
                                     ("FIM_momentum_norm", FIM_momentum_norm[:step]),
                                     ])
-            torch.save(network.state_dict(), f"{directory}/snapshots/{step}")
 
         if eig_freq != -1 and step % eig_freq == 0:
             eigs[step // eig_freq, :] = get_hessian_eigenvalues(network, loss_fn, abridged_train, neigs=neigs,
@@ -148,21 +146,20 @@ if __name__ == "__main__":
                         help="if 'true', save model weights at end of training")
     parser.add_argument("--abridged_size", type=int, default=5000,
                         help="when computing top Hessian eigenvalues, use an abridged dataset of this size")
-    parser.add_argument("--momentum", type=float, default=0,
-                        help="the momentum parameter for the natural gradient descent optimizer")
-    parser.add_argument("--gd_only", action="store_true",
-                        help="if true, only use the gradient descent part of the optimizer")
-    parser.add_argument("--clip", type=float, default=None,
-                        help="the maximum norm for the gradient clipping")
+    # parser.add_argument("--momentum", type=float, default=None,
+    #                     help="the momentum parameter for the natural gradient descent optimizer")
+    # parser.add_argument("--gd_only", action="store_true",
+    #                     help="if true, only use the gradient descent part of the optimizer")
+    # parser.add_argument("--clip", type=float, default=None,
+    #                     help="the maximum norm for the gradient clipping")
     parser.add_argument("--gradient_batch_size", type=int, default=None,
                         help="the number of examples used to compute the gradient")
-    parser.add_argument("--grad_amount", type=float, default=0.0,)
     
     args = parser.parse_args()
     
-    model_fields = {f.name for f in dataclasses.fields(NGD.EmpiricalNGD.Params)}
+    model_fields = {f.name for f in dataclasses.fields(NGD.TrueNGD.Params)}
     model_args = {k: v for k, v in vars(args).items() if k in model_fields}
-    model_params = NGD.EmpiricalNGD.Params(**model_args)
+    model_params = NGD.TrueNGD.Params(**model_args)
     
     main_args = {k: v for k, v in vars(args).items() if k not in model_fields}
 

@@ -14,10 +14,11 @@ from data import load_dataset, take_first, DATASETS
 def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: int, neigs: int = 0,
          physical_batch_size: int = 1000, eig_freq: int = -1, iterate_freq: int = -1, save_freq: int = -1,
          save_model: bool = False, beta: float = 0.0, nproj: int = 0,
-         loss_goal: float = None, acc_goal: float = None, abridged_size: int = 5000, seed: int = 0):
+         loss_goal: float = None, acc_goal: float = None, abridged_size: int = 5000, seed: int = 0, load_from: str = None):
     directory = get_gd_directory(dataset, lr, arch_id, seed, opt, loss, beta)
     print(f"output directory: {directory}")
     makedirs(directory, exist_ok=True)
+    makedirs(f"{directory}/snapshots", exist_ok=True)
 
     train_dataset, test_dataset = load_dataset(dataset, loss)
     abridged_train = take_first(train_dataset, abridged_size)
@@ -26,6 +27,10 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
 
     torch.manual_seed(seed)
     network = load_architecture(arch_id, dataset).cuda()
+    if load_from is not None:
+        print(f"Loading model from {load_from}")
+        network.load_state_dict(torch.load(load_from))
+    
 
     torch.manual_seed(7)
     projectors = torch.randn(nproj, len(parameters_to_vector(network.parameters())))
@@ -54,6 +59,7 @@ def main(dataset: str, arch_id: str, loss: str, opt: str, lr: float, max_steps: 
             save_files(directory, [("eigs", eigs[:step // eig_freq]), ("iterates", iterates[:step // iterate_freq]),
                                    ("train_loss", train_loss[:step]), ("test_loss", test_loss[:step]),
                                    ("train_acc", train_acc[:step]), ("test_acc", test_acc[:step])])
+            torch.save(network.state_dict(), f"{directory}/snapshots/{step}")
 
         print(f"{step}\t{train_loss[step]:.3f}\t{train_acc[step]:.3f}\t{test_loss[step]:.3f}\t{test_acc[step]:.3f}")
 
@@ -103,10 +109,13 @@ if __name__ == "__main__":
                         help="the frequency at which we save resuls")
     parser.add_argument("--save_model", type=bool, default=False,
                         help="if 'true', save model weights at end of training")
+    parser.add_argument("--load_from", type=str, default=None,
+                        help="if specified, load model weights from this file before training")
+    
     args = parser.parse_args()
 
     main(dataset=args.dataset, arch_id=args.arch_id, loss=args.loss, opt=args.opt, lr=args.lr, max_steps=args.max_steps,
          neigs=args.neigs, physical_batch_size=args.physical_batch_size, eig_freq=args.eig_freq,
          iterate_freq=args.iterate_freq, save_freq=args.save_freq, save_model=args.save_model, beta=args.beta,
          nproj=args.nproj, loss_goal=args.loss_goal, acc_goal=args.acc_goal, abridged_size=args.abridged_size,
-         seed=args.seed)
+         seed=args.seed, load_from=args.load_from)
